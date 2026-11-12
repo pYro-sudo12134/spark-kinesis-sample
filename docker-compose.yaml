@@ -24,16 +24,63 @@ services:
       retries: 60
       start_period: 10s
 
-  postgres:
+  postgres-primary:
     image: postgres:16
+    container_name: pg-primary
+    hostname: postgres-primary
     environment:
       POSTGRES_USER: iceberg
       POSTGRES_PASSWORD: iceberg
       POSTGRES_DB: iceberg
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      PG_REPL_USER: "${PG_REPL_USER}"
+      PG_REPL_PASSWORD: "${PG_REPL_PASSWORD}"
+    command: >
+      postgres
+      -c listen_addresses=*
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby=on
+      -c password_encryption=scram-sha-256
+      -c hba_file=/etc/postgresql/pg_hba.conf
     ports:
-      - "5432:5432"
+      - "${PG_PRIMARY_PORT:-5432}:5432"
     volumes:
-      - "pgdata:/var/lib/postgresql/data"
+      - "pg_primary_data:/var/lib/postgresql/data"
+      - "./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro"
+      - "./postgres/primary/init:/docker-entrypoint-initdb.d:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iceberg -d iceberg -h 127.0.0.1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  postgres-replica:
+    image: postgres:16
+    container_name: pg-replica
+    hostname: postgres-replica
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PG_REPL_USER: "${PG_REPL_USER}"
+      PG_REPL_PASSWORD: "${PG_REPL_PASSWORD}"
+    ports:
+      - "${PG_REPLICA_PORT:-5433}:5432"
+    volumes:
+      - "pg_replica_data:/var/lib/postgresql/data"
+      - "./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro"
+      - "./postgres/replica/entrypoint-replica.sh:/usr/local/bin/entrypoint-replica.sh:ro"
+    entrypoint: ["/bin/bash", "/usr/local/bin/entrypoint-replica.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iceberg -d iceberg -h 127.0.0.1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
 
   spark-master:
     build:
@@ -88,7 +135,13 @@ services:
       args:
         SPARK_HADOOP_AWS_VER: "${SPARK_HADOOP_AWS_VER}"
         SPARK_AWS_SDK_VER: "${SPARK_AWS_SDK_VER}"
-    depends_on: [spark-master, spark-worker, postgres]
+    depends_on:
+      spark-master:
+        condition: service_started
+      spark-worker:
+        condition: service_started
+      postgres-primary:
+        condition: service_healthy
     profiles: ["job"]
     environment:
       AWS_ENDPOINT_URL: "http://localstack:4566"
@@ -122,6 +175,7 @@ services:
         /opt/job.py
 
 volumes:
-  pgdata:
+  pg_primary_data:
+  pg_replica_data:
 
 #   docker compose run --rm spark-submit
