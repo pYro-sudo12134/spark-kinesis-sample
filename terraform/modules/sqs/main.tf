@@ -1,7 +1,7 @@
 resource "aws_sqs_queue" "this" {
-  name                    = var.queue_name
-  kms_master_key_id       = var.kms_key_arn
-  tags                    = var.tags
+  name              = var.queue_name
+  kms_master_key_id = var.kms_key_arn
+  tags              = var.tags
 }
 
 resource "aws_sqs_queue_policy" "this" {

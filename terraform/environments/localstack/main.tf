@@ -85,7 +85,7 @@ module "ssm" {
   parameters_prefix_path = var.ssm_prefix
   aws_region             = var.aws_region
   account_id             = var.account_id
-  kms_key_arn = module.kms.key_arn
+  kms_key_arn            = module.kms.key_arn
   tags                   = var.tags
   parameters = {
     "${var.ssm_prefix}/bucket_name"          = { value = var.bucket_name, type = "String" }
@@ -186,7 +186,7 @@ module "lambda_canary" {
   }
   log_retention_in_days     = var.lambda_log_retention_days
   kms_key_arn_for_log_group = module.kms.key_arn
-  kms_key_arn_for_env = module.kms.key_arn
+  kms_key_arn_for_env       = module.kms.key_arn
   tags                      = var.tags
 }
 
@@ -206,7 +206,7 @@ module "lambda_error_counter" {
   }
   log_retention_in_days     = var.lambda_log_retention_days
   kms_key_arn_for_log_group = module.kms.key_arn
-  kms_key_arn_for_env = module.kms.key_arn
+  kms_key_arn_for_env       = module.kms.key_arn
   tags                      = var.tags
 }
 
