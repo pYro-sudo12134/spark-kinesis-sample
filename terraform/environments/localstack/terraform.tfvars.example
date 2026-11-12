@@ -1,0 +1,53 @@
+aws_region = "us-east-1"
+account_id = "000000000000"
+
+aws_access_key = "test"
+aws_secret_key = "test"
+
+aws_endpoint    = "http://localhost:4566"
+aws_s3_endpoint = "http://s3.localhost.localstack.cloud:4566"
+localstack_endpoint_from_container = "http://localstack:4566"
+
+trusted_account_ids          = ["000000000000"]
+spark_trusted_principal_arns = []
+
+bucket_name               = "events-lake"
+events_prefix             = "events/"
+error_prefix              = "errors/"
+curated_prefix            = "curated/"
+iceberg_warehouse_prefix = "warehouse/"
+stream_name               = "events"
+stream_shard_count        = 1
+delivery_stream_name      = "events-to-s3"
+firehose_buffer_size_mb   = 1
+firehose_buffer_interval_s = 60
+stream_mode               = "PROVISIONED"
+
+lifecycle_expire_days         = 7
+lifecycle_expire_curated_days = 30
+
+canary_function_name        = "canary-producer"
+error_counter_function_name = "firehose-error-counter"
+lambda_runtime              = "python3.12"
+lambda_timeout_seconds      = 30
+lambda_memory_mb            = 128
+lambda_log_retention_days   = 7
+
+canary_rule_name = "canary-tick"
+canary_schedule  = "rate(1 minute)"
+event_bus_name   = "default"
+
+metric_namespace     = "Firehose/Pipeline"
+error_metric_name    = "ErrorObjectCreated"
+alarm_name           = "firehose-error-objects"
+alarm_threshold      = 1
+alarm_period_seconds = 300
+alarm_eval_periods   = 1
+
+alarm_topic_name = "pipeline-alarms"
+alarm_queue_name = "pipeline-alarms"
+
+kms_alias  = "pipeline-local"
+ssm_prefix = "/pipeline/localstack"
+
+tags = { Project = "kinesis-firehose-spark", Env = "localstack" }

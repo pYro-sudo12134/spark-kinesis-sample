@@ -1,0 +1,11 @@
+output "bucket_name" { value = module.s3.bucket_name }
+output "stream_name" { value = module.kinesis.stream_name }
+output "delivery_stream_name" { value = module.firehose.delivery_stream_name }
+output "canary_function_name" { value = module.lambda_canary.function_name }
+output "error_counter_function_name" { value = module.lambda_error_counter.function_name }
+output "alarm_name" { value = module.cloudwatch.alarm_name }
+output "alarm_queue_url" { value = module.sqs.queue_url }
+output "sns_topic_arn" { value = module.sns.topic_arn }
+output "ssm_prefix" { value = var.ssm_prefix }
+output "spark_role_arn" { value = module.role_spark.role_arn }
+output "kms_key_arn" { value = module.kms.key_arn }

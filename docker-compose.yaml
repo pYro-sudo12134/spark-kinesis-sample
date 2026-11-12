@@ -1,0 +1,127 @@
+name: kinesis-firehose-spark
+
+services:
+  localstack:
+    image: localstack/localstack:${LOCALSTACK_VERSION:-3.5}
+    container_name: ${LOCALSTACK_CONTAINER_NAME:-localstack}
+    ports:
+      - "${LOCALSTACK_PORT:-4566}:4566"
+    environment:
+      SERVICES: >-
+        s3,kinesis,firehose,lambda,events,cloudwatch,logs,sns,sqs,iam,sts,ssm,kms,dynamodb
+      KINESIS_LATENCY: "${KINESIS_LATENCY:-0}"
+      LAMBDA_KEEPALIVE_MS: "${LAMBDA_KEEPALIVE_MS:-0}"
+      DEBUG: 0
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      AWS_DEFAULT_REGION: "${AWS_REGION}"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: iceberg
+      POSTGRES_PASSWORD: iceberg
+      POSTGRES_DB: iceberg
+    ports:
+      - "5432:5432"
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+
+  spark-master:
+    build:
+      context: ./spark
+      args:
+        SPARK_HADOOP_AWS_VER: "${SPARK_HADOOP_AWS_VER}"
+        SPARK_AWS_SDK_VER: "${SPARK_AWS_SDK_VER}"
+    container_name: spark-master
+    hostname: spark-master
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+      HOME: /tmp
+      SPARK_SUBMIT_OPTS: "-Divy.cache.dir=/tmp/.ivy2 -Divy.home=/tmp/.ivy2"
+    command:
+      - "/opt/spark/bin/spark-class"
+      - "org.apache.spark.deploy.master.Master"
+      - "--host"
+      - "spark-master"
+      - "--port"
+      - "7077"
+      - "--webui-port"
+      - "8080"
+    ports:
+      - "7077:7077"
+      - "8086:8080"
+
+  spark-worker:
+    build:
+      context: ./spark
+      args:
+        SPARK_HADOOP_AWS_VER: "${SPARK_HADOOP_AWS_VER}"
+        SPARK_AWS_SDK_VER: "${SPARK_AWS_SDK_VER}"
+    depends_on: [spark-master]
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+      HOME: /tmp
+      SPARK_SUBMIT_OPTS: "-Divy.cache.dir=/tmp/.ivy2 -Divy.home=/tmp/.ivy2"
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: "2g"
+    command:
+      - "/opt/spark/bin/spark-class"
+      - "org.apache.spark.deploy.worker.Worker"
+      - "spark://spark-master:7077"
+    deploy:
+      replicas: 2
+    ports:
+      - "8081-8082:8081"
+
+  spark-submit:
+    build:
+      context: ./spark
+      args:
+        SPARK_HADOOP_AWS_VER: "${SPARK_HADOOP_AWS_VER}"
+        SPARK_AWS_SDK_VER: "${SPARK_AWS_SDK_VER}"
+    depends_on: [spark-master, spark-worker, postgres]
+    profiles: ["job"]
+    environment:
+      AWS_ENDPOINT_URL: "http://localstack:4566"
+      AWS_REGION: "${AWS_REGION}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      SSM_PREFIX: "${SSM_PREFIX}"
+      HOME: /tmp
+      PYTHONPATH: "/opt"
+      SPARK_SUBMIT_OPTS: "-Divy.cache.dir=/tmp/.ivy2 -Divy.home=/tmp/.ivy2"
+      AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT: "true"
+    volumes:
+      - "./spark/job.py:/opt/job.py:ro"
+      - "./common:/opt/common:ro"
+    command:
+      - "bash"
+      - "-c"
+      - >-
+        pip install --quiet boto3==1.34.0 &&
+        exec /opt/spark/bin/spark-submit
+        --master spark://spark-master:7077
+        --deploy-mode client
+        --conf spark.driver.host=$(hostname -i)
+        --conf spark.driver.bindAddress=0.0.0.0
+        --conf spark.driver.port=7078
+        --conf spark.blockManager.port=7079
+        --conf spark.executor.memory=1g
+        --conf spark.executor.cores=1
+        --conf spark.hadoop.fs.s3a.committer.magic.enabled=true
+        --packages org.apache.hadoop:hadoop-aws:${SPARK_HADOOP_AWS_VER},com.amazonaws:aws-java-sdk-bundle:${SPARK_AWS_SDK_VER},org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:${ICEBERG_VER},org.postgresql:postgresql:42.7.3
+        /opt/job.py
+
+volumes:
+  pgdata:
+
+#   docker compose run --rm spark-submit
