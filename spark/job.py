@@ -69,7 +69,8 @@ def _spark_with_s3a(
         .config("spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog")
         .config("spark.sql.catalog.local.type", "jdbc")
         .config(
-            "spark.sql.catalog.local.uri", "jdbc:postgresql://postgres-master:5432/iceberg"
+            "spark.sql.catalog.local.uri",
+            "jdbc:postgresql://postgres-primary:5432/iceberg",
         )
         .config("spark.sql.catalog.local.jdbc.user", "iceberg")
         .config("spark.sql.catalog.local.jdbc.password", "iceberg")
