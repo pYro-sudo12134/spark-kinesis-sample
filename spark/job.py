@@ -16,6 +16,19 @@ CURATED_PREFIX_OVERRIDE = os.environ.get("CURATED_PREFIX_OVERRIDE", "")
 
 ICEBERG_TABLE = "local.curated"
 
+EMITTED_AT_FMT = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX"
+
+CURATED_SCHEMA_DDL = """
+    event_type    STRING,
+    canary_id     STRING,
+    emitted_at    STRING,
+    partition_key STRING,
+    payload       STRUCT<ping: STRING>,
+    dt            DATE
+"""
+
+DEDUP_KEY = ["partition_key", "emitted_at"]
+
 
 def _spark_with_s3a(
     creds: dict, region: str, path_style: bool, iceberg_warehouse: str
@@ -71,38 +84,59 @@ def _spark_with_s3a(
 
 
 def _assert_canary_fresh(df, cutoff: datetime) -> str:
-    fmt = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX"
-    emitted_ts = F.to_timestamp("emitted_at", fmt)
-    cutoff_ts = F.to_timestamp(F.lit(cutoff.isoformat()), fmt)
+    emitted_ts = F.to_timestamp("emitted_at", EMITTED_AT_FMT)
+    cutoff_ts = F.to_timestamp(F.lit(cutoff.isoformat()), EMITTED_AT_FMT)
 
     recent = df.filter(F.col("event_type") == "canary").filter(
         emitted_ts.isNotNull() & (emitted_ts >= cutoff_ts)
     )
-    n = recent.count()
-    if n == 0:
+
+    row = recent.agg(
+        F.count(F.lit(1)).alias("n"),
+        F.max("emitted_at").alias("latest"),
+    ).collect()[0]
+
+    if row["n"] == 0:
         raise RuntimeError(
             f"CANARY MISSING: no canary with emitted_at >= {cutoff.isoformat()} "
             f"(lookback {CANARY_LOOKBACK_MINUTES} min). Refusing to publish."
         )
-
-    latest = recent.agg(F.max("emitted_at")).collect()[0][0]
-    return str(latest)
+    return str(row["latest"])
 
 
 def _ensure_iceberg_table(spark: SparkSession) -> None:
     log(None, phase="iceberg_create_if_not_exists", table=ICEBERG_TABLE)
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {ICEBERG_TABLE} (
-            event_type STRING,
-            canary_id STRING,
-            emitted_at STRING,
-            partition_key STRING,
-            payload STRUCT<ping: STRING>,
-            dt DATE
+            {CURATED_SCHEMA_DDL}
         )
         USING iceberg
         PARTITIONED BY (dt)
     """)
+
+
+def _merge_insert_only(spark: SparkSession, updates_view: str) -> None:
+    spark.sql(f"""
+        MERGE INTO {ICEBERG_TABLE} t
+        USING {updates_view} s
+        ON  t.partition_key = s.partition_key
+        AND t.emitted_at    = s.emitted_at
+        AND t.dt            = s.dt
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+
+
+def _export_to_parquet(spark: SparkSession, curated_path: str, touched_dts) -> None:
+    if not touched_dts:
+        log(None, phase="export_parquet_skip", reason="no touched dt")
+        return
+
+    log(None, phase="export_parquet", path=curated_path, dts=list(touched_dts))
+
+    silver = spark.read.table(ICEBERG_TABLE).where(F.col("dt").isin(*touched_dts))
+    silver.write.mode("overwrite").partitionBy("dt").parquet(curated_path)
+
+    log(None, phase="export_parquet_done", path=curated_path)
 
 
 def main() -> int:
@@ -152,6 +186,7 @@ def main() -> int:
             )
             .select("r.*")
             .filter(F.col("event_type").isNotNull())
+            .cache()
         )
 
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=CANARY_LOOKBACK_MINUTES)
@@ -165,28 +200,38 @@ def main() -> int:
 
         curated = (
             records.filter(F.col("event_type") != "canary")
-            .withColumn("dt", F.to_date(F.to_timestamp("emitted_at")))
+            .filter(
+                F.col("partition_key").isNotNull() & F.col("emitted_at").isNotNull()
+            )
+            .withColumn("dt", F.to_date(F.to_timestamp("emitted_at", EMITTED_AT_FMT)))
+            .filter(F.col("dt").isNotNull())
+            .dropDuplicates(DEDUP_KEY)
             .cache()
         )
 
         n_curated = curated.count()
         log(None, phase="curated_materialized", rows=n_curated)
 
-        log(None, phase="write_parquet", path=curated_path, partition_by=["dt"])
-        curated.write.mode("overwrite").partitionBy("dt").parquet(curated_path)
-        log(None, phase="write_parquet_done", path=curated_path)
+        if n_curated == 0:
+            log(None, phase="noop", reason="no non-canary events in batch")
+            curated.unpersist()
+            records.unpersist()
+            return 0
 
         _ensure_iceberg_table(spark)
 
-        log(None, phase="write_iceberg", table=ICEBERG_TABLE)
-        for row in curated.select("dt").distinct().collect():
-            if row["dt"] is not None:
-                spark.sql(f"DELETE FROM {ICEBERG_TABLE} WHERE dt = DATE '{row['dt']}'")
+        curated.createOrReplaceTempView("curated_updates")
+        log(None, phase="merge_into_iceberg", table=ICEBERG_TABLE)
+        _merge_insert_only(spark, "curated_updates")
+        log(None, phase="merge_into_iceberg_done", table=ICEBERG_TABLE)
 
-        curated.writeTo(ICEBERG_TABLE).using("iceberg").append()
-        log(None, phase="write_iceberg_done", table=ICEBERG_TABLE)
+        touched_dts = [
+            r["dt"] for r in curated.select("dt").distinct().collect() if r["dt"]
+        ]
+        _export_to_parquet(spark, curated_path, touched_dts)
 
         curated.unpersist()
+        records.unpersist()
 
         log(
             None,
@@ -194,6 +239,7 @@ def main() -> int:
             parquet_path=curated_path,
             iceberg_table=ICEBERG_TABLE,
             rows=n_curated,
+            touched_dts=touched_dts,
         )
         return 0
     finally:
