@@ -7,5 +7,4 @@ lambda/*/common/
 __pycache__/
 *.pyc
 .env
-build
 .ruff_cache
