@@ -29,8 +29,8 @@ services:
     container_name: pg-primary
     hostname: postgres-primary
     environment:
-      POSTGRES_USER: iceberg
-      POSTGRES_PASSWORD: iceberg
+      POSTGRES_USER: "${ICEBERG_USER}"
+      POSTGRES_PASSWORD: "${ICEBERG_PASS}"
       POSTGRES_DB: iceberg
       POSTGRES_INITDB_ARGS: "--data-checksums"
       PG_REPL_USER: "${PG_REPL_USER}"
@@ -85,9 +85,6 @@ services:
   spark-master:
     build:
       context: ./spark
-      args:
-        SPARK_HADOOP_AWS_VER: "${SPARK_HADOOP_AWS_VER}"
-        SPARK_AWS_SDK_VER: "${SPARK_AWS_SDK_VER}"
     container_name: spark-master
     hostname: spark-master
     environment:
@@ -110,9 +107,6 @@ services:
   spark-worker:
     build:
       context: ./spark
-      args:
-        SPARK_HADOOP_AWS_VER: "${SPARK_HADOOP_AWS_VER}"
-        SPARK_AWS_SDK_VER: "${SPARK_AWS_SDK_VER}"
     depends_on: [spark-master]
     environment:
       SPARK_NO_DAEMONIZE: "true"
@@ -135,6 +129,9 @@ services:
       args:
         SPARK_HADOOP_AWS_VER: "${SPARK_HADOOP_AWS_VER}"
         SPARK_AWS_SDK_VER: "${SPARK_AWS_SDK_VER}"
+        ICEBERG_USER: "${ICEBERG_USER}"
+        ICEBERG_PASS: "${ICEBERG_PASS}"
+        ICEBERG_PG_URL: "${ICEBERG_PG_URL}"
     depends_on:
       spark-master:
         condition: service_started

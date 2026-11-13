@@ -54,9 +54,9 @@ def _spark_with_s3a(
         .config("spark.hadoop.fs.s3a.attempts.maximum", "3")
         .config("spark.sql.adaptive.enabled", "true")
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
-        .config("spark.sql.shuffle.partitions", "1000")
+        .config("spark.sql.shuffle.partitions", "100")
         .config("spark.sql.adaptive.advisoryPartitionSizeInBytes", "64MB")
-        .config("spark.sql.adaptive.coalescePartitions.minPartitionSize", "1MB")
+        .config("spark.sql.adaptive.coalescePartitions.minPartitionSize", "16MB")
         .config(
             "spark.sql.files.maxPartitionBytes",
             os.environ.get("SPARK_MAX_PARTITION_BYTES", str(128 * 1024 * 1024)),
@@ -70,10 +70,18 @@ def _spark_with_s3a(
         .config("spark.sql.catalog.local.type", "jdbc")
         .config(
             "spark.sql.catalog.local.uri",
-            "jdbc:postgresql://postgres-primary:5432/iceberg",
+            os.environ.get(
+                "ICEBERG_PG_URL", "jdbc:postgresql://postgres-primary:5432/iceberg"
+            ),
         )
-        .config("spark.sql.catalog.local.jdbc.user", "iceberg")
-        .config("spark.sql.catalog.local.jdbc.password", "iceberg")
+        .config(
+            "spark.sql.catalog.local.jdbc.user",
+            os.environ.get("ICEBERG_USER", "iceberg"),
+        )
+        .config(
+            "spark.sql.catalog.local.jdbc.password",
+            os.environ.get("ICEBERG_PASS", "iceberg"),
+        )
         .config("spark.sql.catalog.local.warehouse", iceberg_warehouse)
         .config("spark.sql.catalog.local.jdbc.schema-version", "V1")
     )
